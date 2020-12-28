@@ -10,18 +10,31 @@ import android.location.Location;
 import android.os.Bundle;
 import android.util.Log;
 
+import com.example.map.retrofit.NearByApi;
+import com.example.map.retrofit.models.NearByApiResponse;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
-import com.google.android.libraries.places.api.Places;
+
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.OkHttpClient;
+import okhttp3.logging.HttpLoggingInterceptor;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
 
 
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback {
@@ -35,6 +48,11 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private static final String TAG = "Tag";
     private final LatLng defaultLocation = new LatLng(-33.8523341, 151.2106085);
     private static final int DEFAULT_ZOOM = 15;
+    NearByApi nearByApi = null;
+    private int PROXIMITY_RADIUS = 10000;
+
+
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,7 +69,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 //
 //        // Construct a PlaceDetectionClient.
 //        mPlaceDetectionClient = Places.getPlaceDetectionClient(this, null);
-
 
     }
 
@@ -76,11 +93,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     }
 
     private void getLocationPermission() {
-        /*
-         * Request location permission, so that we can get the location of the
-         * device. The result of the permission request is handled by a callback,
-         * onRequestPermissionsResult.
-         */
         if (ContextCompat.checkSelfPermission(this.getApplicationContext(),
                 android.Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED) {
@@ -160,5 +172,69 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         } catch (SecurityException e)  {
             Log.e("Exception: %s", e.getMessage(), e);
         }
+        findPlaces();
+    }
+
+
+    public void findPlaces(){
+        Call<NearByApiResponse> call = getApiService().getNearbyPlaces("restaurant", lastKnownLocation.getLatitude() + "," + lastKnownLocation.getLongitude(), PROXIMITY_RADIUS);
+
+        call.enqueue(new Callback<NearByApiResponse>() {
+            @Override
+            public void onResponse(Call<NearByApiResponse> call, Response<NearByApiResponse> response) {
+                try {
+                    map.clear();
+                    // This loop will go through all the results and add marker on each location.
+                    for (int i = 0; i < response.body().getResults().size(); i++) {
+                        Double lat = response.body().getResults().get(i).getGeometry().getLocation().getLat();
+                        Double lng = response.body().getResults().get(i).getGeometry().getLocation().getLng();
+                        String placeName = response.body().getResults().get(i).getName();
+                        String vicinity = response.body().getResults().get(i).getVicinity();
+                        MarkerOptions markerOptions = new MarkerOptions();
+                        LatLng latLng = new LatLng(lat, lng);
+                        // Location of Marker on Map
+                        markerOptions.position(latLng);
+                        // Title for Marker
+                        markerOptions.title(placeName + " : " + vicinity);
+                        // Color or drawable for marker
+                        markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE));
+                        // add marker
+                        Marker m = map.addMarker(markerOptions);
+                        // move map camera
+                        map.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+                        map.animateCamera(CameraUpdateFactory.zoomTo(13));
+                    }
+                } catch (Exception e) {
+                    Log.d("onResponse", "There is an error");
+                    e.printStackTrace();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<NearByApiResponse> call, Throwable t) {
+                Log.d("onFailure", t.toString());
+                t.printStackTrace();
+                PROXIMITY_RADIUS += 10000;
+            }
+        });
+    }
+
+    public NearByApi getApiService() {
+        if (nearByApi == null) {
+            HttpLoggingInterceptor interceptor = new HttpLoggingInterceptor();
+            interceptor.setLevel(HttpLoggingInterceptor.Level.BODY);
+            OkHttpClient client = new OkHttpClient.Builder().retryOnConnectionFailure(true).readTimeout(80, TimeUnit.SECONDS).connectTimeout(80, TimeUnit.SECONDS).addInterceptor(interceptor).build();
+
+            Retrofit retrofit = new Retrofit.Builder().baseUrl("https://maps.googleapis.com/maps/").addConverterFactory(getApiConvertorFactory()).client(client).build();
+
+            nearByApi = retrofit.create(NearByApi.class);
+            return nearByApi;
+        } else {
+            return nearByApi;
+        }
+    }
+
+    private static GsonConverterFactory getApiConvertorFactory() {
+        return GsonConverterFactory.create();
     }
 }
